@@ -2,18 +2,16 @@ import numpy as np
 import pickle
 import tensorflow as tf
 from tensorflow.keras import backend as K
-from tensorflow.keras import regularizers
 from tensorflow.keras import optimizers
+from tensorflow.keras import regularizers
 from tensorflow.keras.datasets import cifar10
-from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.layers import (Conv2D, MaxPooling2D, BatchNormalization,
                                      Concatenate, Dense, Dropout, Activation,
                                      Flatten, Input, Lambda)
+from tensorflow.keras.models import Model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.callbacks import LearningRateScheduler
 
-from modules_external.selectivnet_utils import *
+from selectivnet_utils import *
 
 
 class cifar10vgg:
@@ -220,7 +218,7 @@ class cifar10vgg:
         def selective_acc(y_true, y_pred):
             g = K.cast(K.greater(y_pred[:, -1], 0.5), K.floatx())
             temp1 = K.sum(
-                g * K.cast(K.equal(K.argmax(y_true[:, :-1], axis=-1), K.argmax(y_pred[:, :-1], axis=-1)), K.floatx()))
+                (g) * K.cast(K.equal(K.argmax(y_true[:, :-1], axis=-1), K.argmax(y_pred[:, :-1], axis=-1)), K.floatx()))
             temp1 = temp1 / K.sum(g)
             return K.cast(temp1, K.floatx())
 
@@ -228,44 +226,53 @@ class cifar10vgg:
             g = K.cast(K.greater(y_pred[:, -1], 0.5), K.floatx())
             return K.mean(g)
 
+
+
+        # training parameters
         batch_size = 128
         maxepoches = 300
         learning_rate = 0.1
+
+        lr_decay = 1e-6
+
         lr_drop = 25
 
         def lr_scheduler(epoch):
             return learning_rate * (0.5 ** (epoch // lr_drop))
 
-        reduce_lr = LearningRateScheduler(lr_scheduler)
+        reduce_lr = tf.keras.callbacks.LearningRateScheduler(lr_scheduler)
 
+        # data augmentation
         datagen = ImageDataGenerator(
-            rotation_range=15,
-            width_shift_range=0.1,
-            height_shift_range=0.1,
-            horizontal_flip=True,
-        )
+            featurewise_center=False,  # set input mean to 0 over the dataset
+            samplewise_center=False,  # set each sample mean to 0
+            featurewise_std_normalization=False,  # divide inputs by std of the dataset
+            samplewise_std_normalization=False,  # divide each input by its std
+            zca_whitening=False,  # apply ZCA whitening
+            rotation_range=15,  # randomly rotate images in the range (degrees, 0 to 180)
+            width_shift_range=0.1,  # randomly shift images horizontally (fraction of total width)
+            height_shift_range=0.1,  # randomly shift images vertically (fraction of total height)
+            horizontal_flip=True,  # randomly flip images
+            vertical_flip=False)  # randomly flip images
+        # (std, mean, and principal components if ZCA whitening is applied).
         datagen.fit(self.x_train)
 
+        # optimization details
         sgd = optimizers.SGD(learning_rate=learning_rate, momentum=0.9, nesterov=True)
 
-        model.compile(
-            loss=[selective_loss, 'categorical_crossentropy'],
-            loss_weights=[self.alpha, 1 - self.alpha],
-            optimizer=sgd,
-            metrics=[[selective_acc, coverage], ['accuracy']]
-        )
+        model.compile(loss=[selective_loss, 'categorical_crossentropy'], loss_weights=[self.alpha, 1 - self.alpha],
+                      optimizer=sgd, metrics=[[selective_acc, coverage], ['accuracy']])
 
-        historytemp = model.fit(
-            my_generator(datagen.flow, self.x_train, self.y_train, batch_size=batch_size, k=self.num_classes),
-            steps_per_epoch=self.x_train.shape[0] // batch_size,
-            epochs=maxepoches,
-            callbacks=[reduce_lr],
-            validation_data=(self.x_test, [self.y_test, self.y_test[:, :-1]])
+        historytemp = model.fit(my_generator(datagen.flow, self.x_train, self.y_train, 
+                                             batch_size=batch_size, k=self.num_classes),
+                                steps_per_epoch=self.x_train.shape[0] // batch_size,
+                                epochs=maxepoches, callbacks=[reduce_lr],
+                                validation_data=(self.x_test, [self.y_test, self.y_test[:, :-1]])
         )
 
         with open(f"checkpoints/{self.filename[:-3]}_history.pkl", 'wb') as handle:
             pickle.dump(historytemp.history, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         model.save_weights(f"checkpoints/{self.filename}")
-        print(model.output_names)
+
         return model
