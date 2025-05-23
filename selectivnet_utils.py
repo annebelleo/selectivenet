@@ -85,9 +85,8 @@ def post_calibration(model_name, model_cls, lamda, calibrated_coverage=None, mod
 
 def my_generator(func, x_train, y_train, batch_size, k=10):
     while True:
-        res = func(x_train, y_train, batch_size
-                   ).next()
-        yield [res[0], [res[1], res[1][:, :-1]]]
+        res = next(func(x_train, y_train, batch_size))
+        yield (res[0], (res[1], res[1][:, :-1]))
 
 
 def create_cats_vs_dogs_npz(cats_vs_dogs_path='datasets'):
